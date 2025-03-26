@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">EchoGhat Companion</string>
+    <string name="title_activity_main">EchoGhat Companion</string>
+    <string name="package_name">com.echoghat.companion</string>
+    <string name="custom_url_scheme">com.echoghat.companion</string>
+</resources>
