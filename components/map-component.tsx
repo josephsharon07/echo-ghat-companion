@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Geolocation } from '@capacitor/geolocation';
-import { BleClient } from '@capacitor-community/bluetooth-le'; // BLE library
+import { BleClient, numbersToDataView } from '@capacitor-community/bluetooth-le'; // BLE library
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { stringify } from 'node:querystring';
 
 // Fix for default marker icons in Leaflet with webpack
 delete L.Icon.Default.prototype._getIconUrl;
@@ -90,12 +91,35 @@ const LeafletCapacitorMap = () => {
   };
 
   // Function to send data via BLE
-  const sendDataViaBLE = async (data) => {
+  interface BLEData {
+    id: string | null;
+    type: string | null;
+    speed: string;
+    lat: number;
+    lon: number;
+    dir: number;
+  }
+
+  const sendDataViaBLE = async (data: BLEData): Promise<void> => {
     try {
-      const jsonData = JSON.stringify(data);
-      // Replace with actual BLE write logic
-      console.log('Sending data via BLE:', jsonData);
-      // Example: await BleClient.write(deviceId, serviceUUID, characteristicUUID, jsonData);
+      const dummyData = 'hello';
+      //const jsonData  = JSON.stringify(dummyData);
+      console.log('Sending data via BLE:', dummyData, localStorage.getItem('bleDeviceId'));
+      const deviceId: string | null = localStorage.getItem('bleDeviceId');
+      const serviceUUID: string | null = localStorage.getItem('serviceId');
+      const characteristicUUID: string | null = localStorage.getItem('writeId');
+
+      if (deviceId && serviceUUID && characteristicUUID) {
+        // Convert string to byte array
+        const encoder = new TextEncoder();
+        const dataArray = encoder.encode(dummyData);
+        alert(`Sending data via BLE: ${dataArray}`);
+        
+        
+        await BleClient.write(deviceId, serviceUUID, characteristicUUID, numbersToDataView(dataArray));
+      } else {
+        console.error('Missing BLE identifiers: deviceId, serviceUUID, or characteristicUUID is null.');
+      }
     } catch (err) {
       console.error('Error sending data via BLE:', err);
     }
@@ -468,3 +492,7 @@ const LeafletCapacitorMap = () => {
 };
 
 export default LeafletCapacitorMap;
+
+function str(jsonData: string): DataView<ArrayBufferLike> {
+  throw new Error('Function not implemented.');
+}

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { BleClient, BleDevice } from '@capacitor-community/bluetooth-le';
 
 const SettingsScreen = () => {
   const [vehicleId, setVehicleId] = useState(localStorage.getItem('vehicleId') || '');
@@ -11,6 +12,7 @@ const SettingsScreen = () => {
   const [serviceId, setServiceId] = useState(localStorage.getItem('serviceId') || '');
   const [readId, setReadId] = useState(localStorage.getItem('readId') || '');
   const [writeId, setWriteId] = useState(localStorage.getItem('writeId') || '');
+  const [bleDeviceId, setBleDeviceId] = useState(localStorage.getItem('bleDeviceId') || '');
 
   const handleVehicleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -39,6 +41,22 @@ const SettingsScreen = () => {
     const value = e.target.value;
     setWriteId(value);
     localStorage.setItem('writeId', value);
+  };
+
+  const handleSearchAndConnect = async () => {
+    try {
+      await BleClient.initialize();
+      const device: BleDevice = await BleClient.requestDevice({
+        services: [], // Specify required BLE services here
+      });
+      BleClient.connect(device.deviceId);
+      setBleDeviceId(device.deviceId);
+      localStorage.setItem('bleDeviceId', device.deviceId);
+      alert(`Connected to BLE device: ${device.name || 'Unknown Device'}`);
+    } catch (error) {
+      console.error('Error connecting to BLE device:', error);
+      alert('Failed to connect to BLE device.');
+    }
   };
 
   return (
@@ -106,7 +124,22 @@ const SettingsScreen = () => {
             />
           </div>
         </div>
-
+        <div className="mt-8">
+          <h3 className="text-lg font-semibold mb-4 text-left">BLE Device Connection</h3>
+          <div className="mb-6">
+            <button
+              onClick={handleSearchAndConnect}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            >
+              Search and Connect to BLE Device
+            </button>
+          </div>
+          {bleDeviceId && (
+            <div className="text-left">
+              <p className="text-sm text-gray-600">Connected Device ID: {bleDeviceId}</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
