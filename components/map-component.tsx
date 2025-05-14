@@ -8,6 +8,7 @@ import { CapacitorHttp } from '@capacitor/core';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import 'leaflet.offline';
+import 'leaflet-rotatedmarker';
 import { VehicleTypeMap } from './settings-component';
 
 // Type declarations for Leaflet offline functionality
@@ -18,6 +19,14 @@ declare module 'leaflet' {
   
   interface ControlStatic {
     savetiles(layer: TileLayer, options?: any): Control;
+  }
+
+  interface Marker {
+    setRotationAngle(angle: number): this;
+  }
+
+  interface MarkerOptions {
+    rotationAngle?: number;
   }
 }
 
@@ -37,6 +46,7 @@ interface Vehicle {
   la: number; // latitude
   lo: number; // longitude
   d: number;  // direction
+  lastAlertTime?: number; // timestamp of last alert
 }
 
 // Function to get vehicle type string from number
