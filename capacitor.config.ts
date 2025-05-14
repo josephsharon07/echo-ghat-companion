@@ -9,7 +9,10 @@ const config: CapacitorConfig = {
       permissions: {
         permissions: true
       }
-    }
+    },
+    CapacitorHttp: {
+      enabled: true,
+    },
   }
 };
 

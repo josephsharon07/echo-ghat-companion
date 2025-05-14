@@ -1,18 +1,34 @@
 "use client"
 import { Map } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BleClient, BleDevice } from '@capacitor-community/bluetooth-le';
+import { CapacitorHttp } from '@capacitor/core';
+
+// Vehicle type mapping
+export const VehicleTypeMap = {
+  car: 0,
+  bike: 1,
+  truck: 2,
+  bus: 3,
+} as const;
+
+export type VehicleTypeNumber = typeof VehicleTypeMap[keyof typeof VehicleTypeMap];
+
+interface StatusData {
+  loraInitialized: boolean;
+  wifiConnected: boolean;
+  wifiStrength: number;
+  ipAddress: string;
+  battery: number;
+}
 
 const SettingsScreen = () => {
   const [vehicleId, setVehicleId] = useState(localStorage.getItem('vehicleId') || '');
   const [vehicleType, setVehicleType] = useState(localStorage.getItem('vehicleType') || '');
-  const [serviceId, setServiceId] = useState(localStorage.getItem('serviceId') || '');
-  const [readId, setReadId] = useState(localStorage.getItem('readId') || '');
-  const [writeId, setWriteId] = useState(localStorage.getItem('writeId') || '');
-  const [bleDeviceId, setBleDeviceId] = useState(localStorage.getItem('bleDeviceId') || '');
+  const [serverUrl, setServerUrl] = useState(localStorage.getItem('serverUrl') || 'http://192.168.1.4');
+  const [status, setStatus] = useState<StatusData | null>(null);
 
   const handleVehicleIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -23,46 +39,92 @@ const SettingsScreen = () => {
   const handleVehicleTypeChange = (value: string) => {
     setVehicleType(value);
     localStorage.setItem('vehicleType', value);
+    localStorage.setItem('vehicleTypeNumber', VehicleTypeMap[value as keyof typeof VehicleTypeMap].toString());
   };
 
-  const handleServiceIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleServerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setServiceId(value);
-    localStorage.setItem('serviceId', value);
+    setServerUrl(value);
+    localStorage.setItem('serverUrl', value);
   };
 
-  const handleReadIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setReadId(value);
-    localStorage.setItem('readId', value);
+  // Function to get WiFi signal strength label
+  const getWifiStrengthLabel = (strength: number) => {
+    if (strength >= -50) return 'Excellent';
+    if (strength >= -60) return 'Good';
+    if (strength >= -70) return 'Fair';
+    return 'Poor';
   };
 
-  const handleWriteIdChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setWriteId(value);
-    localStorage.setItem('writeId', value);
+  // Function to calculate battery percentage for Li-ion battery
+  const calculateBatteryPercentage = (voltage: number): number => {
+    const maxVoltage = 4.2;  // Li-ion fully charged
+    const minVoltage = 3.0;  // Li-ion fully discharged
+    const percentage = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100;
+    return Math.min(Math.max(0, Math.round(percentage)), 100); // Clamp between 0-100%
   };
 
-  const handleSearchAndConnect = async () => {
-    try {
-      await BleClient.initialize();
-      const device: BleDevice = await BleClient.requestDevice({
-        services: [], // Specify required BLE services here
-      });
-      BleClient.connect(device.deviceId);
-      setBleDeviceId(device.deviceId);
-      localStorage.setItem('bleDeviceId', device.deviceId);
-      alert(`Connected to BLE device: ${device.name || 'Unknown Device'}`);
-    } catch (error) {
-      console.error('Error connecting to BLE device:', error);
-      alert('Failed to connect to BLE device.');
-    }
+  // Function to get battery status color
+  const getBatteryStatusColor = (percentage: number): string => {
+    if (percentage > 60) return 'text-green-600';
+    if (percentage > 20) return 'text-yellow-600';
+    return 'text-red-600';
   };
+
+  // Fetch status info
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const options = {
+          url: `${serverUrl}/status`,
+        };
+
+        const response = await CapacitorHttp.get(options);
+
+        if (response.status !== 200) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = response.data;
+        const formattedData: StatusData = {
+          loraInitialized: data.status === 'online',
+          wifiConnected: data.wifi_strength > -70,
+          wifiStrength: data.wifi_strength,
+          ipAddress: data.ip,
+          battery: data.battery_voltage,
+        };
+        setStatus(formattedData);
+      } catch (error) {
+        console.error('Error fetching status:', error);
+      }
+    };
+
+    // Initial fetch
+    fetchStatus();
+
+    // Set up interval to fetch every 5 seconds
+    const interval = setInterval(fetchStatus, 5000);
+
+    return () => clearInterval(interval);
+  }, [serverUrl]);
 
   return (
     <div className="p-6 max-w-lg mx-auto text-center bg-gray-50 rounded-lg shadow-md">
       <h2 className="text-2xl font-bold mb-6">Settings</h2>
       <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold mb-4 text-left">Connection Settings</h3>
+        <div className="mb-6">
+          <Label htmlFor="serverUrl" className="block text-left font-medium mb-2">Server URL</Label>
+          <Input
+            id="serverUrl"
+            type="text"
+            value={serverUrl}
+            onChange={handleServerUrlChange}
+            className="w-full border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="http://192.168.1.4"
+          />
+        </div>
+
         <h3 className="text-lg font-semibold mb-4 text-left">Vehicle Settings</h3>
         <div className="mb-6">
           <Label htmlFor="vehicleId" className="block text-left font-medium mb-2">Vehicle ID</Label>
@@ -84,61 +146,61 @@ const SettingsScreen = () => {
               <SelectValue placeholder="Select a vehicle type" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="car">Car</SelectItem>
-              <SelectItem value="bike">Bike</SelectItem>
-              <SelectItem value="truck">Truck</SelectItem>
-              <SelectItem value="bus">Bus</SelectItem>
+              <SelectItem value="car">Car (0)</SelectItem>
+              <SelectItem value="bike">Bike (1)</SelectItem>
+              <SelectItem value="truck">Truck (2)</SelectItem>
+              <SelectItem value="bus">Bus (3)</SelectItem>
             </SelectContent>
           </Select>
         </div>
+
         <div className="mt-8">
-          <h3 className="text-lg font-semibold mb-4 text-left">BLE Settings</h3>
-          <div className="mb-6">
-            <Label htmlFor="serviceId" className="block text-left font-medium mb-2">Service ID</Label>
-            <Input
-              id="serviceId"
-              type="text"
-              value={serviceId}
-              onChange={handleServiceIdChange}
-              className="w-full border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-          <div className="mb-6">
-            <Label htmlFor="readId" className="block text-left font-medium mb-2">Read ID</Label>
-            <Input
-              id="readId"
-              type="text"
-              value={readId}
-              onChange={handleReadIdChange}
-              className="w-full border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-          <div className="mb-6">
-            <Label htmlFor="writeId" className="block text-left font-medium mb-2">Write ID</Label>
-            <Input
-              id="writeId"
-              type="text"
-              value={writeId}
-              onChange={handleWriteIdChange}
-              className="w-full border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-            />
+          <h3 className="text-lg font-semibold mb-4 text-left">System Status</h3>
+          <div className="grid grid-cols-2 gap-4">
+            {status ? (
+              <>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <Label className="text-sm text-gray-600">LoRa Status</Label>
+                  <div className={`text-lg font-semibold mt-1 ${status.loraInitialized ? 'text-green-600' : 'text-red-600'}`}>
+                    {status.loraInitialized ? 'Connected' : 'Disconnected'}
+                  </div>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <Label className="text-sm text-gray-600">WiFi Status</Label>
+                  <div className={`text-lg font-semibold mt-1 ${status.wifiConnected ? 'text-green-600' : 'text-red-600'}`}>
+                    {status.wifiConnected ? `Connected (${getWifiStrengthLabel(status.wifiStrength)})` : 'Disconnected'}
+                  </div>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <Label className="text-sm text-gray-600">IP Address</Label>
+                  <div className="text-lg font-semibold mt-1">{status.ipAddress}</div>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <Label className="text-sm text-gray-600">Battery</Label>
+                  <div className={`text-lg font-semibold mt-1 ${getBatteryStatusColor(calculateBatteryPercentage(status.battery))}`}>
+                    {status.battery.toFixed(2)}V ({calculateBatteryPercentage(status.battery)}%)
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="col-span-2 p-4 bg-gray-50 rounded-lg text-center">
+                <div className="text-gray-500">Loading status...</div>
+              </div>
+            )}
           </div>
         </div>
+
         <div className="mt-8">
-          <h3 className="text-lg font-semibold mb-4 text-left">BLE Device Connection</h3>
-          <div className="mb-6">
-            <button
-              onClick={handleSearchAndConnect}
-              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Search and Connect to BLE Device
-            </button>
+          <h3 className="text-lg font-semibold mb-4 text-left">Server Information</h3>
+          <div className="text-left text-sm text-gray-600">
+            <p>Server URL: {serverUrl}</p>
+            <p className="mt-2">Endpoints:</p>
+            <ul className="list-disc list-inside ml-2 mt-1">
+              <li>Send Data: /send</li>
+              <li>Receive Data: /receive</li>
+              <li>Status: /status</li>
+            </ul>
           </div>
-          {bleDeviceId && (
-            <div className="text-left">
-              <p className="text-sm text-gray-600">Connected Device ID: {bleDeviceId}</p>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -79,15 +79,14 @@ const LocationMap = () => {
       });
 
       // Watch device orientation
-      orientationListener = await Device.addListener('orientationChanged', 
-        (orientation: DeviceOrientationEvent) => {
-          const arrow = document.querySelector('.location-arrow');
-          if (arrow && orientation.alpha !== null) {
-            arrow.setAttribute(
-              'style',
-              `transform: rotate(${orientation.alpha}deg)`
-            );
-          }
+      window.addEventListener('deviceorientation', (event: DeviceOrientationEvent) => {
+        const arrow = document.querySelector('.location-arrow');
+        if (arrow && event.alpha !== null) {
+          arrow.setAttribute(
+            'style',
+            `transform: rotate(${event.alpha}deg)`
+          );
+        }
       });
     };
 
@@ -97,9 +96,7 @@ const LocationMap = () => {
       if (watchId) {
         Geolocation.clearWatch({ id: watchId });
       }
-      if (orientationListener) {
-        orientationListener.remove();
-      }
+      window.removeEventListener('deviceorientation', () => {});
     };
   }, []);
 
