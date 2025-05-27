@@ -1,0 +1,45 @@
+@startuml Activity Diagram
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+
+start
+:Driver starts vehicle and EchoGhat device;
+:System initializes;
+
+fork
+  :Establish LoRa connection;
+fork again
+  :Access GPS location;
+  if (GPS signal found?) then (yes)
+    :Load map at current location;
+  else (no)
+    :Retry GPS acquisition;
+    note right: System will continue trying\nuntil GPS signal is found
+  endif
+end fork
+
+partition "Continuous Operation" {
+  fork
+    :Broadcast vehicle location, 
+    speed, and heading;
+  fork again
+    :Listen for nearby 
+    EchoGhat devices;
+  fork again
+    :Process incoming data 
+    for hazard detection;
+    if (Hazard detected?) then (yes)
+      :Generate voice alert;
+      :Driver takes appropriate action;
+    else (no)
+      :Continue monitoring;
+    endif
+  end fork
+}
+
+:Driver reaches destination;
+:System shutdown;
+stop
+
+@enduml

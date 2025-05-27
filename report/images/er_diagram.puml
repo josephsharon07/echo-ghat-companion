@@ -1,0 +1,35 @@
+@startuml ER Diagram
+!define ENTITY class
+hide circle
+hide methods
+
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+skinparam linetype ortho
+
+ENTITY Users {
+  + User_id (PK)
+  Username
+  Preferences
+}
+
+ENTITY Vehicles {
+  + Vehicle_id (PK)
+  Type
+  Owner_id (FK)
+}
+
+ENTITY Messages {
+  + Message_id (PK)
+  Sender_id (FK)
+  Location_data
+  Speed
+  Heading
+  Timestamp
+}
+
+Users "1" -- "0..*" Vehicles : owns
+Vehicles "1" -- "0..*" Messages : sends
+
+@enduml

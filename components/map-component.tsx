@@ -62,7 +62,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// Constants for vehicle marker handling
+const TIMEOUT_THRESHOLD = 5000; // 5 seconds before starting fade
+const REMOVE_THRESHOLD = 10000; // 10 seconds before complete removal
+
 const LeafletCapacitorMap = (): ReactElement => {
+  const vehicleTimeouts: { [key: string]: { count: number, lastUpdate: number, speed: number, fadeOutStart?: number } } = {};
   const [position, setPosition] = useState<CustomPosition | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,49 +76,119 @@ const LeafletCapacitorMap = (): ReactElement => {
   const [speed, setSpeed] = useState<number>(0);
   const [otherVehicles, setOtherVehicles] = useState<Vehicle[]>([]);
   const [serverUrl, setServerUrl] = useState<string>(
-    localStorage.getItem('serverUrl') || 'http://10.10.1.7'
+    localStorage.getItem('serverUrl') || '192.168.4.1'
   );
 
   // Add voice alert system at the top of the file
+  const audioContext = typeof window !== 'undefined' ? new (window.AudioContext || (window as any).webkitAudioContext)() : null;
+
+  const playBeep = (frequency = 440, duration = 200) => {
+    if (!audioContext) return;
+    
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.type = 'sine';
+    oscillator.frequency.value = frequency;
+    
+    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    gainNode.gain.linearRampToValueAtTime(1, audioContext.currentTime + 0.01);
+    gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + duration / 1000);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + duration / 1000);
+  };
+
   const playVoiceAlert = (message: string) => {
-    const speech = new SpeechSynthesisUtterance(message);
-    speech.rate = 1.2;
-    speech.pitch = 1;
-    window.speechSynthesis.speak(speech);
+    try {
+      if ('speechSynthesis' in window) {
+        const speech = new SpeechSynthesisUtterance(message);
+        speech.rate = 1.2;
+        speech.pitch = 1;
+        speech.lang = 'en-US';
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(speech);
+      } else {
+        // Fallback to beep patterns
+        switch (true) {
+          case message.includes('opposite direction'):
+            playBeep(880, 200); // High pitch for opposite direction
+            setTimeout(() => playBeep(880, 200), 300);
+            break;
+          case message.includes('behind'):
+            playBeep(440, 300); // Medium pitch for vehicle behind
+            break;
+          case message.includes('bend'):
+            playBeep(660, 150); // Quick beeps for bends
+            setTimeout(() => playBeep(660, 150), 200);
+            break;
+          case message.includes('collision'):
+            playBeep(1100, 100); // Rapid high beeps for collision risk
+            setTimeout(() => playBeep(1100, 100), 150);
+            setTimeout(() => playBeep(1100, 100), 300);
+            break;
+          default:
+            playBeep(550, 200); // Default alert
+        }
+      }
+    } catch (error) {
+      console.error('Error in audio alert:', error);
+    }
   };
 
   const checkForFastVehicles = (vehicles: Vehicle[], ourPosition: CustomPosition | null) => {
     if (!ourPosition) return;
 
-    const SPEED_THRESHOLD = 40; // Lowered to 40 km/h
-    const DISTANCE_THRESHOLD = 200; // Lowered to 200 meters for earlier warnings
+    const SPEED_THRESHOLD = 30; // Lower threshold for mountain roads
+    const CLOSE_DISTANCE = 100; // Very close vehicles (100 meters)
+    const WARN_DISTANCE = 150; // Warning distance (150 meters)
     const ourHeading = ourPosition.heading || 0;
     const currentTime = Date.now();
 
     vehicles.forEach(vehicle => {
       const speed = parseFloat(vehicle.s);
-      if (speed > SPEED_THRESHOLD) {
-        const distance = calculateDistance(
-          ourPosition.lat, 
-          ourPosition.lng,
-          vehicle.la,
-          vehicle.lo
-        );
+      const distance = calculateDistance(
+        ourPosition.lat, 
+        ourPosition.lng,
+        vehicle.la,
+        vehicle.lo
+      );
 
-        if (distance < DISTANCE_THRESHOLD) {
-          const relativeAngle = Math.abs(ourHeading - vehicle.d);
-          const distanceInMeters = Math.round(distance);
-          
-          // Check if we've alerted for this vehicle recently
-          const lastAlertTime = vehicle.lastAlertTime || 0;
-          if (currentTime - lastAlertTime > 10000) { // 10 second cooldown
-            if (relativeAngle > 150 && relativeAngle < 210) {
-              playVoiceAlert(`Warning! Vehicle approaching from opposite direction at ${speed.toFixed(0)} kilometers per hour, ${distanceInMeters} meters ahead`);
-            } else if (relativeAngle < 30 || relativeAngle > 330) {
-              playVoiceAlert(`Warning! Fast vehicle approaching from behind at ${speed.toFixed(0)} kilometers per hour, ${distanceInMeters} meters away`);
-            }
-            vehicle.lastAlertTime = currentTime;
+      // Skip if vehicle is too far
+      if (distance > WARN_DISTANCE) return;
+
+      // Calculate relative angle and normalize to 0-360
+      const relativeAngle = ((vehicle.d - ourHeading + 360) % 360);
+      const isBehind = relativeAngle > 135 && relativeAngle < 225;
+      const isOpposite = relativeAngle < 45 || relativeAngle > 315;
+      
+      // Get relative speed (negative means approaching)
+      const relativeSpeed = speed - ourPosition.speed;
+      
+      // Check last alert time for this vehicle
+      const lastAlertTime = vehicle.lastAlertTime || 0;
+      if (currentTime - lastAlertTime > 5000) { // 5 second cooldown
+        
+        // Priority 1: Very close fast vehicles
+        if (distance < CLOSE_DISTANCE && speed > SPEED_THRESHOLD) {
+          if (isBehind) {
+            playVoiceAlert(`Warning! Fast vehicle ${Math.round(distance)} meters behind you`);
+          } else if (isOpposite) {
+            playVoiceAlert(`Warning! Oncoming vehicle ${Math.round(distance)} meters ahead`);
           }
+          vehicle.lastAlertTime = currentTime;
+        }
+        // Priority 2: Approaching vehicles with high relative speed
+        else if (distance < WARN_DISTANCE && relativeSpeed < -20) {
+          if (isBehind) {
+            playVoiceAlert(`Fast approaching vehicle from behind, ${Math.round(distance)} meters`);
+          } else if (isOpposite) {
+            playVoiceAlert(`Fast oncoming vehicle, ${Math.round(distance)} meters ahead`);
+          }
+          vehicle.lastAlertTime = currentTime;
         }
       }
     });
@@ -201,6 +276,7 @@ const LeafletCapacitorMap = (): ReactElement => {
   const controlsRef = useRef<HTMLDivElement>(null);
   const previousPositionRef = useRef<CustomPosition | null>(null);
   const vehicleMarkersRef = useRef<{ [key: string]: L.Marker }>({});
+  const speedHistoryRef = useRef<number[]>([]);
 
   // Calculate distance between two points in meters
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -215,7 +291,7 @@ const LeafletCapacitorMap = (): ReactElement => {
     return R * c;
   };
 
-  // Calculate speed based on distance and time
+  // Improved speed calculation with Kalman filtering and smoothing
   const calculateSpeed = (newPosition: CustomPosition): number => {
     if (!previousPositionRef.current) {
       previousPositionRef.current = newPosition;
@@ -223,28 +299,88 @@ const LeafletCapacitorMap = (): ReactElement => {
     }
 
     const prevPos = previousPositionRef.current;
+    
+    // Calculate distance between points
     const distance = calculateDistance(
       prevPos.lat, prevPos.lng,
       newPosition.lat, newPosition.lng
     );
     
+    // Time difference in seconds
     const timeDiff = (newPosition.timestamp - prevPos.timestamp) / 1000;
     
-    // Only update if we have a meaningful time difference
-    if (timeDiff > 0) {
-      const calculatedSpeed = (distance / timeDiff) * 3.6; // Convert m/s to km/h
-      
-      // Update previous position for next calculation
-      previousPositionRef.current = newPosition;
-      
-      // Return calculated speed if it seems reasonable (less than 200 km/h)
-      if (calculatedSpeed >= 0 && calculatedSpeed < 200) {
-        return calculatedSpeed;
-      }
+    // Speed history for smoothing
+    if (!speedHistoryRef.current) {
+      speedHistoryRef.current = [];
     }
     
-    // Return current speed if calculation seems off
-    return speed;
+    // If time difference is too small or too large, it's likely unreliable
+    if (timeDiff < 0.1 || timeDiff > 5) {
+      // Just return the last known speed or 0
+      const lastSpeed = speedHistoryRef.current.length > 0 
+        ? speedHistoryRef.current[speedHistoryRef.current.length - 1] 
+        : 0;
+      
+      previousPositionRef.current = newPosition;
+      return lastSpeed;
+    }
+    
+    // Apply accuracy-based noise filtering
+    // Higher accuracy (lower number) means more reliable
+    const accuracyFactor = Math.min(1, 5 / newPosition.accuracy);
+    
+    // Initial raw speed calculation (m/s converted to km/h)
+    let rawSpeed = (distance / timeDiff) * 3.6;
+    
+    // Detect and handle GPS jumps (likely errors)
+    if (distance > 50 && timeDiff < 2 && speedHistoryRef.current.length > 0) {
+      // This is probably a GPS jump - use previous speed
+      rawSpeed = speedHistoryRef.current[speedHistoryRef.current.length - 1];
+    }
+    
+    // Apply physical movement constraints
+    // Max reasonable acceleration/deceleration ~3 m/s² (10.8 km/h per second)
+    const maxSpeedChange = 10.8 * timeDiff;
+    const prevSpeed = speedHistoryRef.current.length > 0 
+      ? speedHistoryRef.current[speedHistoryRef.current.length - 1] 
+      : 0;
+    
+    const constrainedSpeed = Math.max(
+      0, 
+      Math.min(
+        prevSpeed + maxSpeedChange,
+        Math.max(0, prevSpeed - maxSpeedChange),
+        rawSpeed
+      )
+    );
+    
+    // Apply exponential moving average smoothing
+    // Alpha depends on GPS accuracy and speed (higher speed = more responsive)
+    const baseAlpha = 0.3 * accuracyFactor;
+    const alpha = Math.min(0.8, baseAlpha + (constrainedSpeed / 100));
+    
+    const smoothedSpeed = prevSpeed * (1 - alpha) + constrainedSpeed * alpha;
+    
+    // Keep a short history for average calculations (last 3 readings)
+    speedHistoryRef.current.push(smoothedSpeed);
+    if (speedHistoryRef.current.length > 5) {
+      speedHistoryRef.current.shift();
+    }
+    
+    // Update previous position for next calculation
+    previousPositionRef.current = newPosition;
+    
+    // Final speed value is a trimmed mean of recent values to further smooth outliers
+    const sortedSpeeds = [...speedHistoryRef.current].sort((a, b) => a - b);
+    let finalSpeed = smoothedSpeed;
+    
+    if (sortedSpeeds.length >= 3) {
+      // Remove highest and lowest if we have enough samples
+      const trimmedSpeeds = sortedSpeeds.slice(1, -1);
+      finalSpeed = trimmedSpeeds.reduce((sum, s) => sum + s, 0) / trimmedSpeeds.length;
+    }
+    
+    return finalSpeed;
   };
 
   // Create a custom arrow icon using the provided image
@@ -262,11 +398,52 @@ const LeafletCapacitorMap = (): ReactElement => {
     return arrowIcon;
   };
 
+  // Enhanced interpolation function with better smoothing
+  const interpolatePosition = (from: [number, number], to: [number, number], fromSpeed: number, toSpeed: number, direction: number, deltaTime: number): [number, number] => {
+    // Convert speeds from km/h to m/s
+    const fromSpeedMS = fromSpeed / 3.6;
+    const toSpeedMS = toSpeed / 3.6;
+    
+    // Use acceleration/deceleration for smoother speed transitions
+    const avgSpeed = (fromSpeedMS + toSpeedMS) / 2;
+    const maxAcceleration = 2; // m/s^2
+    const speedDiff = toSpeedMS - fromSpeedMS;
+    const acceleration = Math.min(Math.abs(speedDiff) / deltaTime, maxAcceleration) * Math.sign(speedDiff);
+    const currentSpeed = fromSpeedMS + (acceleration * deltaTime);
+    
+    // Calculate distance traveled
+    const distance = currentSpeed * deltaTime;
+    
+    // Convert direction to radians
+    const directionRad = direction * Math.PI / 180;
+    
+    // Calculate movement vector
+    const dx = distance * Math.sin(directionRad);
+    const dy = distance * Math.cos(directionRad);
+    
+    // Convert to lat/lng (approximate)
+    const metersPerLat = 111111;
+    const metersPerLng = metersPerLat * Math.cos(from[0] * Math.PI / 180);
+    
+    // Apply easing function for smoother transitions
+    const easing = (t: number) => t * t * (3 - 2 * t); // Smooth step function
+    const t = easing(Math.min(1, deltaTime));
+    
+    // Blend between current position and predicted position
+    const predictedLat = from[0] + (dy / metersPerLat);
+    const predictedLng = from[1] + (dx / metersPerLng);
+    
+    const lat = from[0] + (predictedLat - from[0]) * t;
+    const lng = from[1] + (predictedLng - from[1]) * t;
+    
+    return [lat, lng];
+  };
+
   // Function to send data via HTTP
   const sendDataViaHTTP = async (data: Vehicle): Promise<void> => {
     try {
       const options = {
-        url: `${serverUrl}/send`,
+        url: `http://${serverUrl}/send`,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -287,7 +464,7 @@ const LeafletCapacitorMap = (): ReactElement => {
   const receiveDataViaHTTP = async () => {
     try {
       const options = {
-        url: `${serverUrl}/receive`,
+        url: `http://${serverUrl}/receive`,
       };
 
       const response = await CapacitorHttp.get(options);
@@ -362,6 +539,37 @@ const LeafletCapacitorMap = (): ReactElement => {
     }
   };
 
+  // Calculate heading based on movement
+  const calculateHeadingFromMovement = (current: CustomPosition, previous: CustomPosition | null): number | undefined => {
+    if (!previous) return undefined;
+    
+    // Need at least some movement to calculate direction
+    const distance = calculateDistance(
+      previous.lat, previous.lng,
+      current.lat, current.lng
+    );
+    
+    // Only calculate heading if we've moved at least 3 meters (reduces jitter)
+    if (distance < 3) return previous.heading;
+    
+    // Calculate angle between points
+    const y = Math.sin(current.lng - previous.lng) * Math.cos(current.lat);
+    const x = Math.cos(previous.lat) * Math.sin(current.lat) -
+              Math.sin(previous.lat) * Math.cos(current.lat) * Math.cos(current.lng - previous.lng);
+    
+    let heading = Math.atan2(y, x) * 180 / Math.PI;
+    heading = (heading + 360) % 360; // Normalize to 0-360
+    
+    // Apply some smoothing with previous heading if available
+    if (previous.heading !== undefined) {
+      // More weight to the new heading at higher speeds for responsiveness
+      const weight = Math.min(0.8, Math.max(0.2, current.speed / 20));
+      return previous.heading * (1 - weight) + heading * weight;
+    }
+    
+    return heading;
+  };
+
   // Handle position helper function
   const handlePosition = (geoPosition: GeolocationPosition | null) => {
     if (!geoPosition) return;
@@ -371,33 +579,150 @@ const LeafletCapacitorMap = (): ReactElement => {
       lng: geoPosition.coords.longitude,
       accuracy: geoPosition.coords.accuracy,
       timestamp: Date.now(),
-      heading: geoPosition.coords.heading ?? undefined,
       speed: geoPosition.coords.speed !== null && geoPosition.coords.speed !== undefined 
         ? geoPosition.coords.speed * 3.6 
         : 0  // Always provide a default speed
     };
 
+    // Calculate speed if not provided by GPS
+    if (geoPosition.coords.speed === null || geoPosition.coords.speed === undefined) {
+      newPosition.speed = calculateSpeed(newPosition);
+    }
+
+    // Calculate heading based on movement instead of compass
+    const previousPosition = positionHistoryRef.current.length > 0 
+      ? positionHistoryRef.current[positionHistoryRef.current.length - 1] 
+      : null;
+      
+    // Only use device compass as fallback when not moving or for initial heading
+    if (newPosition.speed < 3) {
+      // At very low speeds, use device compass if available, otherwise keep previous heading
+      newPosition.heading = geoPosition.coords.heading ?? previousPosition?.heading;
+    } else {
+      // At higher speeds, calculate heading from movement
+      newPosition.heading = calculateHeadingFromMovement(newPosition, previousPosition);
+    }
+
     setPosition(newPosition);
-    setSpeed(newPosition.speed); // Now this is type-safe since speed is always a number
+    setSpeed(newPosition.speed);
     positionHistoryRef.current.push(newPosition);
   };
 
-  const interpolatePosition = (from: [number, number], to: [number, number], fromSpeed: number, toSpeed: number, direction: number, deltaTime: number): [number, number] => {
-    // Convert speed from km/h to m/s
-    const speedMS = (fromSpeed + toSpeed) / 2 / 3.6;
-    const distance = speedMS * deltaTime;
-    
-    // Calculate predicted position based on speed and direction
-    const directionRad = direction * Math.PI / 180;
-    const predictedLat = from[0] + (distance / 111111) * Math.cos(directionRad);
-    const predictedLng = from[1] + (distance / (111111 * Math.cos(from[0] * Math.PI / 180))) * Math.sin(directionRad);
-    
-    // Blend between current position and predicted position
-    const blendFactor = 0.3; // Adjust for smoother or more responsive movement
-    const lat = from[0] + (predictedLat - from[0]) * blendFactor;
-    const lng = from[1] + (predictedLng - from[1]) * blendFactor;
-    
-    return [lat, lng];
+  // Create reference for last alert time
+  const lastAlertTimeRef = useRef<{ current: number }>({ current: 0 });
+
+  // Update marker movement in updateVehicleMarkers
+  const updateVehicleMarkers = (updateInterval: number) => {
+    if (!mapInstanceRef.current) return;
+
+    const currentTime = Date.now();
+
+    // Update or add markers for received vehicles
+    otherVehicles.forEach((vehicle: Vehicle) => {
+      const { i, t, s, la, lo, d } = vehicle;
+      const vehicleType = getVehicleTypeString(t);
+      const newPosition: [number, number] = [la, lo];
+      const currentSpeed = parseFloat(s);
+
+      // Reset timeout data when we receive an update
+      vehicleTimeouts[i] = { 
+        count: 0, 
+        lastUpdate: currentTime, 
+        speed: currentSpeed,
+        fadeOutStart: undefined 
+      };
+
+      if (vehicleMarkersRef.current[i]) {
+        const currentMarker = vehicleMarkersRef.current[i];
+        const currentPosition = currentMarker.getLatLng();
+        const deltaTime = updateInterval / 1000;
+
+        // Apply smooth rotation
+        const currentAngle = currentMarker.options.rotationAngle || 0;
+        const angleDiff = ((d - currentAngle + 540) % 360) - 180;
+        const smoothAngle = currentAngle + (angleDiff * Math.min(1, deltaTime * 3));
+
+        // Get interpolated position with improved smoothing
+        const interpolatedPosition = interpolatePosition(
+          [currentPosition.lat, currentPosition.lng],
+          newPosition,
+          vehicleTimeouts[i].speed,
+          currentSpeed,
+          smoothAngle,
+          deltaTime
+        );
+
+        currentMarker.setLatLng(interpolatedPosition);
+        currentMarker.setRotationAngle(smoothAngle);
+        currentMarker.setPopupContent(`Speed: ${s} km/h`);
+        
+        // Reset opacity if the marker was fading
+        currentMarker.setOpacity(1);
+      } else if (mapInstanceRef.current) {
+        const marker = L.marker(newPosition, {
+          icon: createVehicleIcon(vehicleType),
+          rotationAngle: d
+        })
+          .bindPopup(`Speed: ${s} km/h`)
+          .addTo(mapInstanceRef.current);
+        vehicleMarkersRef.current[i] = marker;
+      }
+    });
+    checkForHazards(position, otherVehicles, lastAlertTimeRef.current);
+    // Check for fast vehicles and hazards as before
+    checkForFastVehicles(otherVehicles, position);
+    checkForHazards(position, otherVehicles, { current: lastAlertTimeRef.current.current });
+
+    // Handle stale vehicles
+    Object.entries(vehicleTimeouts).forEach(([id, data]) => {
+      const timeSinceUpdate = currentTime - data.lastUpdate;
+      const marker = vehicleMarkersRef.current[id];
+      
+      if (!marker) return;
+
+      if (timeSinceUpdate > TIMEOUT_THRESHOLD) {
+        // Start fade out if we haven't already
+        if (!data.fadeOutStart) {
+          data.fadeOutStart = currentTime;
+        }
+
+        // Calculate fade progress
+        const fadeTime = currentTime - (data.fadeOutStart || currentTime);
+        const fadeProgress = fadeTime / (REMOVE_THRESHOLD - TIMEOUT_THRESHOLD);
+        const opacity = Math.max(0, 1 - fadeProgress);
+
+        if (timeSinceUpdate > REMOVE_THRESHOLD) {
+          // Finally remove the marker
+          marker.remove();
+          delete vehicleMarkersRef.current[id];
+          delete vehicleTimeouts[id];
+        } else {
+          // Continue moving based on last known speed and direction
+          const currentPos = marker.getLatLng();
+          const deltaTime = updateInterval / 1000;
+          const lastDirection = marker.options.rotationAngle || 0;
+          
+          // Gradually reduce speed as the vehicle fades
+          const reducedSpeed = data.speed * (1 - fadeProgress);
+          
+          const predictedPosition = interpolatePosition(
+            [currentPos.lat, currentPos.lng],
+            [currentPos.lat, currentPos.lng],
+            reducedSpeed,
+            reducedSpeed,
+            lastDirection,
+            deltaTime
+          );
+          
+          marker.setLatLng(predictedPosition);
+          marker.setOpacity(opacity);
+          
+          // Update popup to show stale status
+          const timeAgo = Math.floor(timeSinceUpdate / 1000);
+          marker.setPopupContent(`Last seen ${timeAgo}s ago\nLast speed: ${data.speed.toFixed(1)} km/h`);
+        }
+      }
+    });
   };
 
   // Initialize map
@@ -406,7 +731,7 @@ const LeafletCapacitorMap = (): ReactElement => {
       mapInstanceRef.current = L.map(mapRef.current, {
         zoomControl: false, // Remove default zoom control to add custom one
         attributionControl: false // Remove attribution control for full-screen cleanliness
-      }).setView([0, 0], 2);
+      }).setView([0, 0], 15); // Change initial zoom from 2 to 15 for a closer view
       
       if (mapInstanceRef.current) {
         L.control.attribution({
@@ -419,6 +744,7 @@ const LeafletCapacitorMap = (): ReactElement => {
 
         // Type assertion for offline functionality
         const tileLayer = (L.tileLayer as any).offline('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          minzoom: 10,
           maxZoom: 19,
           attribution: '© OpenStreetMap contributors'
         });
@@ -428,7 +754,7 @@ const LeafletCapacitorMap = (): ReactElement => {
 
           // Type assertion for savetiles control
           const saveControl = (L.control as any).savetiles(tileLayer, {
-            zoomlevels: [12, 13, 14, 15, 16],
+            zoomlevels: [10, 11, 12, 13, 14, 15, 16, 18, 19],
             confirm(layer: any, successCallback: () => void) {
               if (window.confirm('Save tiles for offline use?')) {
                 successCallback();
@@ -475,6 +801,11 @@ const LeafletCapacitorMap = (): ReactElement => {
         
         positionHistoryRef.current.push(newPosition);
         setLoading(false);
+        
+        // Update map view to user's location with appropriate zoom level
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.setView([newPosition.lat, newPosition.lng], 16);
+        }
         
         // Start continuous tracking with 1s interval
         startLocationTracking();
@@ -555,99 +886,20 @@ const LeafletCapacitorMap = (): ReactElement => {
 
   // Effect to update vehicle markers
   useEffect(() => {
-    const vehicleTimeouts: { [key: string]: { count: number, lastUpdate: number, speed: number } } = {};
-    const updateInterval = 50;
+    const TIMEOUT_THRESHOLD = 5000; // 5 seconds before starting fade
+    const REMOVE_THRESHOLD = 10000; // 10 seconds before complete removal
     const lastAlertTime = { current: 0 };
+    const vehicleTimeouts: { 
+      [key: string]: { 
+        count: number, 
+        lastUpdate: number, 
+        speed: number, 
+        fadeOutStart?: number 
+      } 
+    } = {};
+    const updateInterval = 50;
 
-    const updateVehicleMarkers = () => {
-      if (!mapInstanceRef.current) return;
-
-      const currentTime = Date.now();
-
-      // Update or add markers for received vehicles
-      otherVehicles.forEach((vehicle: Vehicle) => {
-        const { i, t, s, la, lo, d } = vehicle;
-        const vehicleType = getVehicleTypeString(t);
-        const newPosition: [number, number] = [la, lo];
-        const currentSpeed = parseFloat(s);
-
-        if (!vehicleTimeouts[i]) {
-          vehicleTimeouts[i] = { count: 0, lastUpdate: currentTime, speed: currentSpeed };
-        } else {
-          vehicleTimeouts[i].lastUpdate = currentTime;
-          vehicleTimeouts[i].speed = currentSpeed;
-        }
-
-        if (vehicleMarkersRef.current[i]) {
-          const currentMarker = vehicleMarkersRef.current[i];
-          const currentPosition = currentMarker.getLatLng();
-          const deltaTime = updateInterval / 1000; // Convert to seconds
-
-          const interpolatedPosition = interpolatePosition(
-            [currentPosition.lat, currentPosition.lng],
-            newPosition,
-            vehicleTimeouts[i].speed,
-            currentSpeed,
-            d,
-            deltaTime
-          );
-
-          currentMarker.setLatLng(interpolatedPosition);
-          currentMarker.setRotationAngle(d);
-          currentMarker.setPopupContent(`Speed: ${s} km/h`);
-        } else if (mapInstanceRef.current) {
-          const marker = L.marker(newPosition, {
-            icon: createVehicleIcon(vehicleType),
-            rotationAngle: d
-          })
-            .bindPopup(`Speed: ${s} km/h`)
-            .addTo(mapInstanceRef.current);
-          vehicleMarkersRef.current[i] = marker;
-        }
-      });
-
-      // Check for fast vehicles
-      checkForFastVehicles(otherVehicles, position);
-
-      // Add hazard checks
-      checkForHazards(position, otherVehicles, lastAlertTime);
-
-      // Check for stale vehicles
-      Object.entries(vehicleTimeouts).forEach(([id, data]) => {
-        const timeSinceUpdate = currentTime - data.lastUpdate;
-        if (timeSinceUpdate > 2000) { // More than 2 seconds since last update
-          data.count++;
-          if (data.count >= 5) { // Remove after 5 missed updates
-            if (vehicleMarkersRef.current[id]) {
-              vehicleMarkersRef.current[id].remove();
-              delete vehicleMarkersRef.current[id];
-            }
-            delete vehicleTimeouts[id];
-          } else {
-            // Continue moving based on last known speed and direction
-            const marker = vehicleMarkersRef.current[id];
-            if (marker) {
-              const currentPos = marker.getLatLng();
-              const deltaTime = updateInterval / 1000;
-              const lastDirection = marker.options.rotationAngle || 0;
-              
-              const predictedPosition = interpolatePosition(
-                [currentPos.lat, currentPos.lng],
-                [currentPos.lat, currentPos.lng], // Same position as target
-                data.speed,
-                data.speed,
-                lastDirection,
-                deltaTime
-              );
-              
-              marker.setLatLng(predictedPosition);
-            }
-          }
-        }
-      });
-    };
-
-    const interval = setInterval(updateVehicleMarkers, updateInterval);
+    const interval = setInterval(() => updateVehicleMarkers(updateInterval), updateInterval);
     return () => clearInterval(interval);
   }, [otherVehicles, position]);
 
@@ -685,35 +937,29 @@ const LeafletCapacitorMap = (): ReactElement => {
   useEffect(() => {
     if (!position || !mapInstanceRef.current) return;
 
-    const heading = position.heading || 0;
     const newPosition: [number, number] = [position.lat, position.lng];
+    const heading = position.heading || 0;
 
-    if (markerRef.current) {
-      const currentPosition = markerRef.current.getLatLng();
-      const interpolatedPosition = interpolatePosition(
-        [currentPosition.lat, currentPosition.lng],
-        newPosition,
-        speed,
-        speed,
-        heading,
-        1 // Assuming 1 second interval
-      );
-      markerRef.current.setLatLng(interpolatedPosition);
-      markerRef.current.setIcon(createArrowIcon(heading));
-    } else {
+    // Create or update marker
+    if (!markerRef.current) {
       markerRef.current = L.marker(newPosition, {
-        icon: createArrowIcon(heading),
-      });
-      if (mapInstanceRef.current) {
-        markerRef.current.addTo(mapInstanceRef.current);
-      }
+        icon: createArrowIcon(heading)
+      }).addTo(mapInstanceRef.current);
+    } else {
+      // Update existing marker position and rotation
+      markerRef.current.setLatLng(newPosition);
+      markerRef.current.setIcon(createArrowIcon(heading));
     }
 
-    if (isTracking && mapInstanceRef.current) {
-      mapInstanceRef.current.setView(newPosition, 16);
-    }
-
+    // Update path history
+    const pathPoints = [...positionHistoryRef.current, position];
+    positionHistoryRef.current = pathPoints;
     drawPath();
+
+    // Update map view if tracking is enabled
+    if (isTracking && mapInstanceRef.current) {
+      mapInstanceRef.current.setView(newPosition, mapInstanceRef.current.getZoom() || 16);
+    }
   }, [position, isTracking]);
 
   return (
@@ -732,7 +978,7 @@ const LeafletCapacitorMap = (): ReactElement => {
       {/* Toggle controls button - always visible */}
       <button
         onClick={toggleControls}
-        className="absolute bottom-4 right-4 z-10 p-2 bg-white rounded-full shadow-md"
+        className="absolute bottom-20 left-4 z-10 p-2 bg-white rounded-full shadow-md"
       >
         {showControls ? '✕' : '⚙️'}
       </button>
@@ -741,7 +987,7 @@ const LeafletCapacitorMap = (): ReactElement => {
       {showControls && (
         <div 
           ref={controlsRef}
-          className="absolute top-4 left-4 z-10 bg-white bg-opacity-90 p-4 rounded-lg shadow-md max-w-xs"
+          className="absolute bottom-20 left-12 z-10 bg-white bg-opacity-90 p-4 rounded-lg shadow-md max-w-xs"
         >
           <div className="mb-2 text-sm font-bold">Location Controls</div>
           

@@ -1,0 +1,34 @@
+@startuml Use Case Diagram
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+skinparam usecaseBackgroundColor white
+skinparam usecaseBorderColor black
+
+actor "Driver" as driver
+actor "System" as system
+
+rectangle "EchoGhat Road Safety System" {
+  usecase "Register Vehicle" as UC1
+  usecase "View Map" as UC2
+  usecase "Receive Safety Alerts" as UC3
+  usecase "Track Other Vehicles" as UC4
+  usecase "Configure Settings" as UC5
+  usecase "Save Offline Maps" as UC6
+}
+
+driver --> UC1
+driver --> UC2
+driver --> UC3
+driver --> UC4
+driver --> UC5
+driver --> UC6
+
+UC1 <-- system
+UC2 <-- system
+UC3 <-- system
+UC4 <-- system
+UC5 <-- system
+UC6 <-- system
+
+@enduml

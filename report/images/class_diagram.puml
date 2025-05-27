@@ -1,0 +1,78 @@
+@startuml Class Diagram
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+
+class User {
+  -userId: string
+  -username: string
+  -preferences: object
+  +getUserId(): string
+  +getPreferences(): object
+  +updatePreferences(prefs: object): void
+}
+
+class Vehicle {
+  -vehicleId: string
+  -type: VehicleType
+  -ownerId: string
+  +getVehicleId(): string
+  +getType(): VehicleType
+  +getLocation(): Location
+  +broadcastData(): void
+}
+
+class LoRaGateway {
+  -deviceIP: string
+  -status: boolean
+  +connect(): boolean
+  +sendData(data: object): boolean
+  +receiveData(): object
+  +checkStatus(): boolean
+}
+
+class MapController {
+  -currentLocation: Location
+  -zoom: number
+  -otherVehicles: Vehicle[]
+  +initMap(): void
+  +updateLocation(loc: Location): void
+  +trackVehicle(vehicle: Vehicle): void
+  +saveOfflineTiles(radius: number): void
+}
+
+class SafetyAlertSystem {
+  -alertThreshold: number
+  -alertVolume: number
+  -enabledAlerts: string[]
+  +checkForHazards(vehicles: Vehicle[]): void
+  +generateAlert(type: string, data: object): void
+  +playVoiceAlert(message: string): void
+}
+
+enum VehicleType {
+  CAR
+  TRUCK
+  BUS
+  BIKE
+}
+
+class Location {
+  -latitude: float
+  -longitude: float
+  -accuracy: float
+  -heading: float
+  -speed: float
+  +calculateDistanceTo(loc: Location): float
+  +getHeadingTo(loc: Location): float
+}
+
+User "1" *-- "0..*" Vehicle : owns
+Vehicle "1" -- "1" LoRaGateway : uses
+MapController "1" -- "1" SafetyAlertSystem : triggers
+MapController -- Vehicle : displays
+SafetyAlertSystem -- Vehicle : monitors
+Vehicle -- Location : has
+
+@enduml

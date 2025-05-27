@@ -1,0 +1,30 @@
+@startuml Architecture Diagram
+skinparam backgroundColor white
+skinparam componentStyle rectangle
+skinparam monochrome true
+skinparam shadowing false
+
+package "EchoGhat Road Safety System" {
+  component "ESP32-LoRa Gateway" as gateway
+  component "Next.js Web Application" as webapp {
+    component "Map Component" as map
+    component "Settings Component" as settings
+    component "Safety Alert System" as alerts
+  }
+  component "Capacitor Mobile Wrapper" as capacitor
+  component "Android App" as android
+  
+  database "Local Storage" as localstorage
+  component "GPS Satellites" as gps
+}
+
+component "Other EchoGhat Vehicles" as vehicles
+
+gps --> capacitor : GPS Location Data
+capacitor --> webapp : Native Device Access
+webapp --> gateway : WiFi Connection
+gateway <--> vehicles : LoRa Radio Communication (433MHz)
+webapp <--> localstorage : Offline Data Storage
+capacitor --> android : Native Android Integration
+
+@enduml

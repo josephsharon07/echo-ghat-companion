@@ -1,0 +1,15 @@
+@startuml DFD Level 0
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+
+actor Driver
+rectangle "EchoGhat\nRoad Safety\nSystem" as System
+actor "Other Vehicles" as Vehicles
+
+Driver --> System : GPS Location Data
+Vehicles --> System : Vehicle Location Data
+System --> Driver : Safety Alerts
+System --> Vehicles : Vehicle Location Data
+
+@enduml

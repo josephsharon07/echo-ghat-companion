@@ -1,0 +1,3 @@
+# PROBLEM DEFINITION
+
+Mountainous ghat roads present **critical safety challenges** due to **blind corners**, **hairpin bends**, and **poor cellular connectivity**. Drivers face significant risks from unseen oncoming traffic, while standard navigation apps become ineffective without reliable network access. Traditional safety measures provide inadequate warning in these environments, and even GPS/compass readings are unreliable in steep, forested terrain. These combined factors lead to **higher accident rates** and **delayed emergency response** in these already hazardous driving conditions. The EchoGhat project addresses these specific challenges through a specialized communication system designed for mountainous terrain.

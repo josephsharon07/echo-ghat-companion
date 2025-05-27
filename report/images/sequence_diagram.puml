@@ -1,0 +1,39 @@
+@startuml Sequence Diagram
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+
+actor Driver
+participant "Mobile App" as App
+participant "LoRa Gateway" as Gateway
+participant "Other Vehicles" as Vehicles
+
+Driver -> App: Launch application
+activate App
+
+App -> Gateway: Connect
+activate Gateway
+
+App -> App: Initialize GPS tracking
+App -> App: Load map interface
+
+loop Every 1 second
+  App -> Gateway: Send location data
+  Gateway -> Vehicles: Broadcast location\n(LoRa transmission)
+  
+  Vehicles -> Gateway: Send location data\n(LoRa reception)
+  Gateway -> App: Forward received data
+  
+  App -> App: Process vehicle data
+  
+  alt Potential hazard detected
+    App -> Driver: Generate voice alert
+  end
+end
+
+Driver -> App: Exit application
+App -> Gateway: Disconnect
+deactivate Gateway
+deactivate App
+
+@enduml

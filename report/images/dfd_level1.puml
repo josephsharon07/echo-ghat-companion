@@ -1,0 +1,32 @@
+@startuml DFD Level 1
+skinparam backgroundColor white
+skinparam monochrome true
+skinparam shadowing false
+
+actor Driver
+actor "Other Vehicles" as Vehicles
+
+rectangle "1.1\nGPS Location\nTracking" as GPS
+rectangle "1.2\nLoRa\nCommunication" as LORA
+rectangle "1.3\nHazard\nDetection" as HAZARD
+rectangle "1.4\nAlert\nGeneration" as ALERT
+rectangle "1.5\nMap\nVisualization" as MAP
+
+database "D1: Vehicle Data" as D1
+database "D2: Nearby Vehicles" as D2
+
+Driver --> GPS : GPS Signal
+GPS --> D1 : Store Position,\nSpeed, Heading
+D1 --> LORA : Vehicle Data
+LORA --> Vehicles : Broadcast Data
+Vehicles --> LORA : Vehicle Data
+LORA --> D2 : Store Nearby\nVehicles
+D2 --> HAZARD : Vehicle Proximity Data
+D1 --> HAZARD : Current Vehicle Data
+HAZARD --> ALERT : Hazard Information
+ALERT --> Driver : Voice/Visual Alerts
+D1 --> MAP : Current Position
+D2 --> MAP : Other Vehicle Positions
+MAP --> Driver : Map Display
+
+@enduml
